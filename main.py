@@ -3,8 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 import time
+import os
 
-API_KEY = "dev-key"
+API_KEY = os.getenv("API_KEY", "dev-key")  # <-- lê da env
+
 app = FastAPI(title="Fetcher API (mock)", version="0.1.0")
 
 app.add_middleware(
@@ -51,24 +53,61 @@ def health():
     return {"status": "ok", "ts": time.time()}
 
 @app.get("/stats", response_model=StatsResponse)
-def stats(modelo: str, ano: int | None = None, cidade: str | None = None, x_api_key: str | None = Header(default=None)):
+def stats(
+    modelo: str,
+    ano: int | None = None,
+    cidade: str | None = None,
+    x_api_key: str | None = Header(default=None),
+):
     _check_api_key(x_api_key)
     base = 55000 if ano is None else max(35000, 60000 - (2025 - (ano or 2020)) * 2000)
-    return StatsResponse(n=62, media=base, mediana=base*0.98, p25=base*0.93, p75=base*1.05, updated_at=time.time())
+    return StatsResponse(
+        n=62,
+        media=base,
+        mediana=base * 0.98,
+        p25=base * 0.93,
+        p75=base * 1.05,
+        updated_at=time.time(),
+    )
 
 @app.get("/search", response_model=SearchResponse)
-def search(modelo: str, ano: int | None = None, cidade: str | None = None, max_price: float | None = None, page: int = 1, x_api_key: str | None = Header(default=None)):
+def search(
+    modelo: str,
+    ano: int | None = None,
+    cidade: str | None = None,
+    max_price: float | None = None,
+    page: int = 1,
+    x_api_key: str | None = Header(default=None),
+):
     _check_api_key(x_api_key)
     base_price = 55000 if ano is None else max(35000, 60000 - (2025 - (ano or 2020)) * 2000)
+
     def mk(i, delta):
         price = base_price + delta
-        if max_price: price = min(price, max_price)
+        if max_price:
+            price = min(price, max_price)
         return Listing(
             id=f"olx-{modelo}-{ano or 0}-{cidade or 'NA'}-{page}-{i}",
             title=f"{modelo} {ano or 0} - Oportunidade {i}",
             url="https://www.olx.com.br/anuncio-exemplo",
-            modelo=modelo, ano=ano, cidade=cidade, preco=round(price, 2),
-            km=50000 + i*3500, cambio="Manual" if i%2 else "Automático", combustivel="Flex", data_coleta=time.time()
+            modelo=modelo,
+            ano=ano,
+            cidade=cidade,
+            preco=round(price, 2),
+            km=50000 + i * 3500,
+            cambio="Manual" if i % 2 else "Automático",
+            combustivel="Flex",
+            data_coleta=time.time(),
         )
-    items = [mk(1,-4000), mk(2,-2500), mk(3,-1000), mk(4,500), mk(5,1500), mk(6,-6000), mk(7,2500), mk(8,-2000)]
-    return SearchResponse(items=items, count=64, next_page=page+1 if page<8 else None)
+
+    items = [
+        mk(1, -4000),
+        mk(2, -2500),
+        mk(3, -1000),
+        mk(4, 500),
+        mk(5, 1500),
+        mk(6, -6000),
+        mk(7, 2500),
+        mk(8, -2000),
+    ]
+    return SearchResponse(items=items, count=64, next_page=page + 1 if page < 8 else None)
