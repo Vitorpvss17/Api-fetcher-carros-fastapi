@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 
 log = logging.getLogger(__name__)
 
-BASE_URL = "https://www.olx.com.br/autos-e-pecas/carros-vans-e-utilitarios/"
+BASE_URL = "https://www.olx.com.br"
 
 @dataclass
 class OlxListing:
