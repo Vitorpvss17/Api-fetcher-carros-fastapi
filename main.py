@@ -1,9 +1,12 @@
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from olx_client import search_olx, OlxListing
 from pydantic import BaseModel
 from typing import List, Optional
 import time
+import math
 import os
+import statistics
 
 API_KEY = os.getenv("API_KEY", "dev-key")  # <-- lê da env
 
@@ -80,34 +83,104 @@ def search(
     x_api_key: str | None = Header(default=None),
 ):
     _check_api_key(x_api_key)
-    base_price = 55000 if ano is None else max(35000, 60000 - (2025 - (ano or 2020)) * 2000)
 
-    def mk(i, delta):
-        price = base_price + delta
-        if max_price:
-            price = min(price, max_price)
-        return Listing(
-            id=f"olx-{modelo}-{ano or 0}-{cidade or 'NA'}-{page}-{i}",
-            title=f"{modelo} {ano or 0} - Oportunidade {i}",
-            url="https://www.olx.com.br/anuncio-exemplo",
-            modelo=modelo,
-            ano=ano,
-            cidade=cidade,
-            preco=round(price, 2),
-            km=50000 + i * 3500,
-            cambio="Manual" if i % 2 else "Automático",
-            combustivel="Flex",
-            data_coleta=time.time(),
+    # Por enquanto, trazemos max 80 itens da primeira página
+    raw_listings: List[OlxListing] = search_olx(
+        modelo=modelo,
+        ano=ano,
+        cidade=cidade,
+        max_price=max_price,
+        max_items=80,
+    )
+
+    # Se quiser fazer paginação "fake" do lado do servidor:
+    page_size = 20
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_items = raw_listings[start:end]
+
+    # Converte OlxListing -> seu modelo Listing (Pydantic)
+    items = [
+        Listing(
+            id=l.id,
+            title=l.title,
+            url=l.url,
+            modelo=l.modelo,
+            ano=l.ano,
+            cidade=l.cidade,
+            preco=l.preco,
+            km=l.km,
+            cambio=l.cambio,
+            combustivel=l.combustivel,
+            data_coleta=l.data_coleta,
+            fonte=l.fonte,
+        )
+        for l in page_items
+    ]
+
+    next_page: Optional[int] = None
+    if end < len(raw_listings):
+        next_page = page + 1
+
+    return SearchResponse(
+        items=items,
+        count=len(raw_listings),
+        next_page=next_page,
+    )
+
+@app.get("/stats", response_model=StatsResponse)
+def stats(
+    modelo: str,
+    ano: int | None = None,
+    cidade: str | None = None,
+    x_api_key: str | None = Header(default=None),
+):
+    _check_api_key(x_api_key)
+
+    listings: List[OlxListing] = search_olx(
+        modelo=modelo,
+        ano=ano,
+        cidade=cidade,
+        max_price=None,
+        max_items=80,
+    )
+
+    prices = [l.preco for l in listings if l.preco is not None]
+
+    if not prices:
+        return StatsResponse(
+            n=0,
+            media=None,
+            mediana=None,
+            p25=None,
+            p75=None,
+            updated_at=time.time(),
         )
 
-    items = [
-        mk(1, -4000),
-        mk(2, -2500),
-        mk(3, -1000),
-        mk(4, 500),
-        mk(5, 1500),
-        mk(6, -6000),
-        mk(7, 2500),
-        mk(8, -2000),
-    ]
-    return SearchResponse(items=items, count=64, next_page=page + 1 if page < 8 else None)
+    prices_sorted = sorted(prices)
+    n = len(prices_sorted)
+    media = float(statistics.mean(prices_sorted))
+    mediana = float(statistics.median(prices_sorted))
+
+    def percentile(p: float) -> float:
+        # p de 0 a 1
+        k = (len(prices_sorted) - 1) * p
+        f = math.floor(k)
+        c = math.ceil(k)
+        if f == c:
+            return float(prices_sorted[int(k)])
+        d0 = prices_sorted[int(f)] * (c - k)
+        d1 = prices_sorted[int(c)] * (k - f)
+        return float(d0 + d1)
+
+    p25 = percentile(0.25)
+    p75 = percentile(0.75)
+
+    return StatsResponse(
+        n=n,
+        media=media,
+        mediana=mediana,
+        p25=p25,
+        p75=p75,
+        updated_at=time.time(),
+    )
